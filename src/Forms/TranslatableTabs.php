@@ -5,6 +5,7 @@ namespace Wotz\TranslatableTabs\Forms;
 use Closure;
 use Filament\Forms\Components\RichEditor;
 use Filament\Schemas\Components\Tabs;
+use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\Utilities\Get;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Support\Arr;
@@ -149,7 +150,7 @@ class TranslatableTabs extends Tabs
     public function getDefaultChildComponents(): array
     {
         $tabs = [
-            \Filament\Schemas\Components\Tabs\Tab::make('Default')
+            Tab::make('Default')
                 ->schema($this->evaluate($this->defaultFields))
                 ->id('default')
                 ->key('default'),
@@ -160,7 +161,7 @@ class TranslatableTabs extends Tabs
         }
 
         foreach ($this->getLocales() as $locale) {
-            $tabs[] = \Filament\Schemas\Components\Tabs\Tab::make($locale)
+            $tabs[] = Tab::make($locale)
                 ->schema($this->evaluate($this->translatableFields, [
                     'locale' => $locale,
                 ]))
