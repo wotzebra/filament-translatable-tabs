@@ -4,6 +4,7 @@ namespace Wotz\TranslatableTabs\Tables;
 
 use Closure;
 use Exception;
+use Filament\Resources\Pages\Page;
 use Filament\Tables\Columns\Column;
 use Filament\Tables\Contracts\HasTable;
 use Illuminate\Support\Str;
@@ -37,7 +38,7 @@ class LocalesColumn extends Column
 
     public function getResourceUrl(string $locale): string
     {
-        /** @var \Filament\Resources\Pages\Page&HasTable $livewire */
+        /** @var Page&HasTable $livewire */
         $livewire = $this->getLivewire();
 
         if (method_exists($livewire, 'getResource')) {
