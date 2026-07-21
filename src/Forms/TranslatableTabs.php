@@ -58,9 +58,13 @@ class TranslatableTabs extends Tabs
                             $components = $livewire->form->getFlatComponents(withActions: false, withHidden: true);
 
                             if (isset($components["{$locale}.{$field}"]) && $components["{$locale}.{$field}"] instanceof RichEditor) {
-                                $value = $components["{$locale}.{$field}"]->getTipTapEditor()
-                                    ->setContent($value)
-                                    ->getDocument();
+                                // Run the editor's own state casts rather than converting through the
+                                // TipTap editor directly, so that the normalisation Filament applies
+                                // in RichEditorStateCast (list items, mention labels, file attachment
+                                // urls, ...) is not skipped.
+                                foreach ($components["{$locale}.{$field}"]->getStateCasts() as $stateCast) {
+                                    $value = $stateCast->set($value);
+                                }
                             }
                         }
                     }
