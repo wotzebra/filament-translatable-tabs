@@ -21,6 +21,6 @@ parameters:
             count: 1
             path: src/Forms/TranslatableTabs.php
         -
-            message: "#Trait Codedor\\\\TranslatableTabs\\\\Resources\\\\Traits\\\\HasTranslations is used zero times and is not analysed\\.$#"
+            message: "#Trait Wotz\\\\TranslatableTabs\\\\Resources\\\\Traits\\\\HasTranslations is used zero times and is not analysed\\.$#"
             count: 1
             path: src/Resources/Traits/HasTranslations.php
