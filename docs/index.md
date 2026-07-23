@@ -58,13 +58,10 @@ public static function form(Form $form): Form
 
 The default fields are the non-translatable fields and the translatable fields will be the fields that are also defined in the `$translatable` property on the model.
 
-And add the `HasTranslations` trait to your pages with a form on (will be mostly Create and Edit):
+That's it — the tabs hydrate the record's translations into a tab per locale and dehydrate them back to the shape `spatie/laravel-translatable` expects when saving. No page trait is needed.
 
-```php
-use Wotz\TranslatableTabs\Resources\Traits\HasTranslations;
-```
-
-This trait is necessary to save the translations together with your other fields. Since we have to manipulate the data after the form is submitted.
+> **Note**
+> Versions before v3 required adding the `HasTranslations` trait to your Create and Edit pages. That trait has been removed; delete it from your pages when upgrading.
 
 We also provide a column to display your locales in a Filament table.
 

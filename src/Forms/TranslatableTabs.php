@@ -3,11 +3,11 @@
 namespace Wotz\TranslatableTabs\Forms;
 
 use Closure;
-use Filament\Forms\Components\RichEditor;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\Utilities\Get;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Livewire\Component as Livewire;
 
@@ -31,77 +31,132 @@ class TranslatableTabs extends Tabs
 
         $this->persistTabInQueryString('locale');
 
-        $this->afterStateHydrated(static function (TranslatableTabs $component, string|array|null $state, Livewire $livewire): void {
-            if (blank($state)) {
-                $component->state([]);
-
-                return;
-            }
-
-            $record = method_exists($livewire, 'getRecord') ? $livewire->getRecord() : null;
-
-            if (! $record || ! method_exists($record, 'getTranslatableAttributes')) {
-                return;
-            }
-
-            foreach ($record->getTranslatableAttributes() as $field) {
-                foreach ($record->getTranslatedLocales($field) as $locale) {
-                    $value = $record->getTranslation($field, $locale);
-
-                    if ($value instanceof Arrayable) {
-                        $value = $value->toArray();
-                    }
-
-                    // RichEditor hack
-                    if (isset($state[$locale][$field]) && is_array($state[$locale][$field])) {
-                        if (isset($state[$locale][$field]['type']) && $state[$locale][$field]['type'] === 'doc' && isset($state[$locale][$field]['content'])) {
-                            $components = $livewire->form->getFlatComponents(withActions: false, withHidden: true);
-
-                            if (isset($components["{$locale}.{$field}"]) && $components["{$locale}.{$field}"] instanceof RichEditor) {
-                                // Run the editor's own state casts rather than converting through the
-                                // TipTap editor directly, so that the normalisation Filament applies
-                                // in RichEditorStateCast (list items, mention labels, file attachment
-                                // urls, ...) is not skipped.
-                                foreach ($components["{$locale}.{$field}"]->getStateCasts() as $stateCast) {
-                                    $value = $stateCast->set($value);
-                                }
-                            }
-                        }
-                    }
-
-                    $state[$locale][$field] = $value;
-                }
-            }
-
-            $component->state($state);
-        });
-
         $this->tabs([]);
     }
 
+    /**
+     * Translations live field-first on the record (`title.en`) but are edited
+     * locale-first in the form (`en.title`). Transpose the record's translations
+     * into the locale tabs before the child fields hydrate, so every field runs
+     * its own state casts (RichEditor, Checkbox, ...) over the translated value.
+     */
+    public function hydrateState(?array &$hydratedDefaultState, bool $shouldCallHydrationHooks = true): void
+    {
+        if ($hydratedDefaultState === null) {
+            $this->fillTranslationsIntoLocaleTabs();
+        }
+
+        parent::hydrateState($hydratedDefaultState, $shouldCallHydrationHooks);
+    }
+
+    /**
+     * Transpose the locale tabs' state back to the field-first shape
+     * (`en.title` -> `title.en`) so `getState()` returns data that the record
+     * accepts natively, and drop the locale-first copy so the dehydrated state
+     * does not hold both shapes.
+     *
+     * @param  array<string, mixed>  $state
+     */
     public function dehydrateState(array &$state, bool $isDehydrated = true): void
     {
         parent::dehydrateState($state, $isDehydrated);
 
-        $model = app($this->getModel());
-
-        if (
-            ! $model
-            || ! method_exists($model, 'getFillable')
-            || ! method_exists($model, 'getTranslatableAttributes')
-        ) {
+        if (! ($isDehydrated && $this->isDehydrated())) {
             return;
         }
 
-        foreach (Arr::except($state['data'] ?? [], $model->getFillable()) as $locale => $values) {
-            if (! is_array($values)) {
+        $translatableAttributes = $this->getTranslatableAttributeNames();
+
+        if (blank($translatableAttributes)) {
+            return;
+        }
+
+        $statePath = $this->getStatePath();
+        $prefix = filled($statePath) ? "{$statePath}." : '';
+
+        foreach ($this->getLocales() as $locale) {
+            $localeState = Arr::get($state, "{$prefix}{$locale}");
+
+            if (! is_array($localeState)) {
                 continue;
             }
 
-            foreach (Arr::only($values, $model->getTranslatableAttributes()) as $key => $value) {
-                $state['data'][$key][$locale] = $value;
+            foreach (Arr::only($localeState, $translatableAttributes) as $field => $value) {
+                Arr::set($state, "{$prefix}{$field}.{$locale}", $value); /** @phpstan-ignore parameterByRef.type */
+                Arr::forget($state, "{$prefix}{$locale}.{$field}"); /** @phpstan-ignore parameterByRef.type */
+            }
+
+            if (blank(Arr::get($state, "{$prefix}{$locale}"))) {
+                Arr::forget($state, "{$prefix}{$locale}"); /** @phpstan-ignore parameterByRef.type */
             }
         }
+    }
+
+    protected function fillTranslationsIntoLocaleTabs(): void
+    {
+        $record = $this->getTranslatableRecord();
+
+        if (! $record) {
+            return;
+        }
+
+        $state = $this->getRawState();
+        $state = is_array($state) ? $state : [];
+
+        foreach ($record->getTranslatableAttributes() as $field) {
+            foreach ($record->getTranslatedLocales($field) as $locale) {
+                $value = $record->getTranslation($field, $locale);
+
+                if ($value instanceof Arrayable) {
+                    $value = $value->toArray();
+                }
+
+                $state[$locale][$field] = $value;
+            }
+
+            // The locale tabs are now the single source of truth; keeping the
+            // field-first attribute around would leave two copies in the form
+            // state and trip Filament's unsaved-changes detection.
+            unset($state[$field]);
+        }
+
+        $this->rawState($state);
+    }
+
+    protected function getTranslatableRecord(): ?Model
+    {
+        $record = $this->getRecord();
+
+        if (! $record instanceof Model) {
+            $livewire = $this->getLivewire();
+
+            $record = method_exists($livewire, 'getRecord') ? $livewire->getRecord() : null;
+        }
+
+        if ($record instanceof Model && method_exists($record, 'getTranslatableAttributes')) {
+            return $record;
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string>
+     */
+    protected function getTranslatableAttributeNames(): array
+    {
+        if ($record = $this->getTranslatableRecord()) {
+            return $record->getTranslatableAttributes();
+        }
+
+        $model = $this->getModel();
+        $model = $model ? app($model) : null;
+
+        if ($model && method_exists($model, 'getTranslatableAttributes')) {
+            return $model->getTranslatableAttributes();
+        }
+
+        return [];
     }
 
     public function defaultFields(array|Closure $defaultFields): static
