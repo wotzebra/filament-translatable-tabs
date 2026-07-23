@@ -40,13 +40,13 @@ class TranslatableTabs extends Tabs
      * into the locale tabs before the child fields hydrate, so every field runs
      * its own state casts (RichEditor, Checkbox, ...) over the translated value.
      */
-    public function hydrateState(?array &$hydratedDefaultState, bool $shouldCallHydrationHooks = true): void
+    public function hydrateState(?array &$hydratedDefaultState, bool $shouldCallHydrationHooks = true, bool $shouldApplyStateCasts = true, array &$appliedStateCastPaths = []): void
     {
         if ($hydratedDefaultState === null) {
             $this->fillTranslationsIntoLocaleTabs();
         }
 
-        parent::hydrateState($hydratedDefaultState, $shouldCallHydrationHooks);
+        parent::hydrateState($hydratedDefaultState, $shouldCallHydrationHooks, $shouldApplyStateCasts, $appliedStateCastPaths);
     }
 
     /**
