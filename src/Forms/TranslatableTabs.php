@@ -3,11 +3,12 @@
 namespace Wotz\TranslatableTabs\Forms;
 
 use Closure;
-use Filament\Forms\Components\RichEditor;
 use Filament\Schemas\Components\Tabs;
 use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Schema;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Livewire\Component as Livewire;
 
@@ -31,77 +32,281 @@ class TranslatableTabs extends Tabs
 
         $this->persistTabInQueryString('locale');
 
-        $this->afterStateHydrated(static function (TranslatableTabs $component, string|array|null $state, Livewire $livewire): void {
-            if (blank($state)) {
-                $component->state([]);
-
-                return;
-            }
-
-            $record = method_exists($livewire, 'getRecord') ? $livewire->getRecord() : null;
-
-            if (! $record || ! method_exists($record, 'getTranslatableAttributes')) {
-                return;
-            }
-
-            foreach ($record->getTranslatableAttributes() as $field) {
-                foreach ($record->getTranslatedLocales($field) as $locale) {
-                    $value = $record->getTranslation($field, $locale);
-
-                    if ($value instanceof Arrayable) {
-                        $value = $value->toArray();
-                    }
-
-                    // RichEditor hack
-                    if (isset($state[$locale][$field]) && is_array($state[$locale][$field])) {
-                        if (isset($state[$locale][$field]['type']) && $state[$locale][$field]['type'] === 'doc' && isset($state[$locale][$field]['content'])) {
-                            $components = $livewire->form->getFlatComponents(withActions: false, withHidden: true);
-
-                            if (isset($components["{$locale}.{$field}"]) && $components["{$locale}.{$field}"] instanceof RichEditor) {
-                                // Run the editor's own state casts rather than converting through the
-                                // TipTap editor directly, so that the normalisation Filament applies
-                                // in RichEditorStateCast (list items, mention labels, file attachment
-                                // urls, ...) is not skipped.
-                                foreach ($components["{$locale}.{$field}"]->getStateCasts() as $stateCast) {
-                                    $value = $stateCast->set($value);
-                                }
-                            }
-                        }
-                    }
-
-                    $state[$locale][$field] = $value;
-                }
-            }
-
-            $component->state($state);
-        });
-
         $this->tabs([]);
     }
 
-    public function dehydrateState(array &$state, bool $isDehydrated = true): void
+    /**
+     * Translations are stored field-first on the record (`title.en`) but are
+     * edited locale-first in the form (`en.title`). Transpose the field-first
+     * translations in the filled state into the locale tabs before the child
+     * fields hydrate, so every field runs its own state casts (RichEditor,
+     * Checkbox, ...) over the translated value. The filled state — not the
+     * record — is the source, so changes made in `mutateFormDataBeforeFill()`
+     * survive.
+     */
+    public function hydrateState(?array &$hydratedDefaultState, bool $shouldCallHydrationHooks = true, bool $shouldApplyStateCasts = true, array &$appliedStateCastPaths = []): void
     {
-        parent::dehydrateState($state, $isDehydrated);
-
-        $model = app($this->getModel());
-
-        if (
-            ! $model
-            || ! method_exists($model, 'getFillable')
-            || ! method_exists($model, 'getTranslatableAttributes')
-        ) {
-            return;
+        if ($hydratedDefaultState === null) {
+            $this->fillTranslationsIntoLocaleTabs();
         }
 
-        foreach (Arr::except($state['data'] ?? [], $model->getFillable()) as $locale => $values) {
-            if (! is_array($values)) {
+        parent::hydrateState($hydratedDefaultState, $shouldCallHydrationHooks, $shouldApplyStateCasts, $appliedStateCastPaths);
+    }
+
+    /**
+     * `EditRecord::refreshFormData()` and `Schema::fillPartially()` write
+     * refreshed attributes field-first and hydrate their field-first state
+     * paths, both of which would bypass the locale tabs. Transpose the
+     * refreshed translations into the locale tabs and rewrite the state paths
+     * so the fields inside the tabs re-hydrate instead.
+     *
+     * @param  array<string>  $statePaths
+     */
+    public function hydrateStatePartially(array $statePaths, bool $shouldCallHydrationHooks = true): void
+    {
+        parent::hydrateStatePartially($this->transposePartiallyFilledTranslations($statePaths), $shouldCallHydrationHooks);
+    }
+
+    protected function makeChildSchema(string $key): Schema
+    {
+        return TranslatableTabsSchema::make($this->getLivewire())
+            ->parentComponent($this);
+    }
+
+    /**
+     * Transpose the locale tabs' dehydrated state back to the field-first
+     * shape (`en.title` -> `title.en`) so `getState()` returns data that the
+     * record accepts natively, and drop the locale-first copy so the
+     * dehydrated state does not hold both shapes. Every field inside the
+     * locale tabs is transposed, so a field missing from the model's
+     * `$translatable` array fails loudly under its own name instead of
+     * leaking a locale key into the state. Called by the child schema after
+     * the fields' `mutateDehydratedStateUsing()` callbacks have run.
+     *
+     * @internal
+     *
+     * @param  array<string, mixed>  $state
+     */
+    public function transposeDehydratedTranslations(array &$state): void
+    {
+        $statePath = $this->getStatePath();
+        $prefix = filled($statePath) ? "{$statePath}." : '';
+
+        foreach ($this->getLocales() as $locale) {
+            $localeState = Arr::get($state, "{$prefix}{$locale}");
+
+            if (! is_array($localeState)) {
                 continue;
             }
 
-            foreach (Arr::only($values, $model->getTranslatableAttributes()) as $key => $value) {
-                $state['data'][$key][$locale] = $value;
+            foreach ($localeState as $field => $value) {
+                Arr::set($state, "{$prefix}{$field}.{$locale}", $value); /** @phpstan-ignore parameterByRef.type */
+            }
+
+            Arr::forget($state, "{$prefix}{$locale}"); /** @phpstan-ignore parameterByRef.type */
+        }
+    }
+
+    protected function fillTranslationsIntoLocaleTabs(): void
+    {
+        $translatableAttributes = $this->getTranslatableAttributeNames();
+
+        if (blank($translatableAttributes)) {
+            return;
+        }
+
+        $state = $this->getRawState();
+        $state = is_array($state) ? $state : [];
+        $locales = $this->getLocales();
+        $stateChanged = false;
+
+        foreach ($translatableAttributes as $field) {
+            $translations = $state[$field] ?? null;
+
+            if ($translations instanceof Arrayable) {
+                $translations = $translations->toArray();
+            }
+
+            if (! is_array($translations)) {
+                continue;
+            }
+
+            foreach ($translations as $locale => $value) {
+                if (! in_array($locale, $locales, true)) {
+                    continue;
+                }
+
+                $state[$locale][$field] = $value instanceof Arrayable ? $value->toArray() : $value;
+            }
+
+            // The locale tabs are now the single source of truth; keeping the
+            // field-first attribute around would leave two copies in the form
+            // state and trip Filament's unsaved-changes detection.
+            unset($state[$field]);
+
+            $stateChanged = true;
+        }
+
+        if ($stateChanged) {
+            $this->rawState($state);
+        }
+    }
+
+    /**
+     * @param  array<string>  $statePaths
+     * @return array<string>
+     */
+    protected function transposePartiallyFilledTranslations(array $statePaths): array
+    {
+        $translatableAttributes = $this->getTranslatableAttributeNames();
+
+        if (blank($translatableAttributes)) {
+            return $statePaths;
+        }
+
+        $statePath = $this->getStatePath();
+        $prefix = filled($statePath) ? "{$statePath}." : '';
+        $locales = $this->getLocales();
+
+        $state = $this->getRawState();
+        $state = is_array($state) ? $state : [];
+        $stateChanged = false;
+
+        $transposedStatePaths = [];
+
+        foreach ($statePaths as $path) {
+            if (filled($prefix) && ! str_starts_with($path, $prefix)) {
+                $transposedStatePaths[] = $path;
+
+                continue;
+            }
+
+            $segments = explode('.', substr($path, strlen($prefix)));
+            $field = $segments[0];
+
+            if (! in_array($field, $translatableAttributes, true)) {
+                $transposedStatePaths[] = $path;
+
+                continue;
+            }
+
+            // `title.en` -> `en.title`: move the value that `fillPartially()`
+            // wrote field-first into the locale tab.
+            if (isset($segments[1]) && in_array($segments[1], $locales, true)) {
+                $fieldFirstPath = implode('.', $segments);
+
+                [$segments[0], $segments[1]] = [$segments[1], $segments[0]];
+                $localeFirstPath = implode('.', $segments);
+
+                if (Arr::has($state, $fieldFirstPath)) {
+                    Arr::set($state, $localeFirstPath, Arr::get($state, $fieldFirstPath));
+                    Arr::forget($state, $fieldFirstPath);
+
+                    if (blank(Arr::get($state, $field))) {
+                        Arr::forget($state, $field);
+                    }
+
+                    $stateChanged = true;
+                }
+
+                $transposedStatePaths[] = "{$prefix}{$localeFirstPath}";
+
+                continue;
+            }
+
+            if (isset($segments[1])) {
+                $transposedStatePaths[] = $path;
+
+                continue;
+            }
+
+            // A whole-attribute refresh (`refreshFormData(['title'])`): the
+            // translations never reach the raw state, because `fillPartially()`
+            // dot-flattens its data before filtering it by state path, so
+            // re-read them from the record.
+            if (is_array($state[$field] ?? null)) {
+                $translations = $state[$field];
+
+                unset($state[$field]);
+
+                $stateChanged = true;
+            } else {
+                $translations = $this->getRecordTranslations($field);
+            }
+
+            foreach ($translations as $locale => $value) {
+                if (! in_array($locale, $locales, true)) {
+                    continue;
+                }
+
+                $state[$locale][$field] = $value instanceof Arrayable ? $value->toArray() : $value;
+                $transposedStatePaths[] = "{$prefix}{$locale}.{$field}";
+                $stateChanged = true;
             }
         }
+
+        if ($stateChanged) {
+            $this->rawState($state);
+        }
+
+        return $transposedStatePaths;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function getRecordTranslations(string $field): array
+    {
+        $record = $this->getTranslatableRecord();
+
+        if (! $record || ! method_exists($record, 'getTranslatedLocales') || ! method_exists($record, 'getTranslation')) {
+            return [];
+        }
+
+        $translations = [];
+
+        foreach ($record->getTranslatedLocales($field) as $locale) {
+            $translations[$locale] = $record->getTranslation($field, $locale);
+        }
+
+        return $translations;
+    }
+
+    protected function getTranslatableRecord(): ?Model
+    {
+        $record = $this->getRecord();
+
+        if (! $record instanceof Model) {
+            $livewire = $this->getLivewire();
+
+            $record = method_exists($livewire, 'getRecord') ? $livewire->getRecord() : null;
+        }
+
+        return ($record instanceof Model && method_exists($record, 'getTranslatableAttributes')) ? $record : null;
+    }
+
+    /**
+     * The record when there is one, otherwise a fresh instance of the
+     * schema's model — enough to know which attributes are translatable.
+     */
+    protected function getTranslatableModel(): ?Model
+    {
+        if ($record = $this->getTranslatableRecord()) {
+            return $record;
+        }
+
+        $model = $this->getModel();
+        $model = $model ? app($model) : null;
+
+        return ($model instanceof Model && method_exists($model, 'getTranslatableAttributes')) ? $model : null;
+    }
+
+    /**
+     * @return array<string>
+     */
+    protected function getTranslatableAttributeNames(): array
+    {
+        return $this->getTranslatableModel()?->getTranslatableAttributes() ?? [];
     }
 
     public function defaultFields(array|Closure $defaultFields): static

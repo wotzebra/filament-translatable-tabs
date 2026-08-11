@@ -1,26 +1,19 @@
 parameters:
-    ignoreErrors:
-        -
-            message: "#^Call to an undefined static method Livewire\\\\Component\\:\\:getResource\\(\\)\\.$#"
-            count: 1
-            path: src/Actions/CopyTranslationAction.php
-        -
-            message: "#^Access to an undefined property Livewire\\\\Component\\:\\:\\$data\\.$#"
-            count: 2
-            path: src/Actions/CopyTranslationAction.php
-        -
-            message: "#^Cannot call method getTranslatedLocales\\(\\)\\ on class-string\\|object\\.$#"
-            count: 1
-            path: src/Forms/TranslatableTabs.php
-        -
-            message: "#^Cannot call method getTranslation\\(\\)\\ on class-string\\|object\\.$#"
-            count: 1
-            path: src/Forms/TranslatableTabs.php
-        -
-            message: "#^Access to an undefined property Livewire\\\\Component\\:\\:\\$form\\.$#"
-            count: 1
-            path: src/Forms/TranslatableTabs.php
-        -
-            message: "#Trait Wotz\\\\TranslatableTabs\\\\Resources\\\\Traits\\\\HasTranslations is used zero times and is not analysed\\.$#"
-            count: 1
-            path: src/Resources/Traits/HasTranslations.php
+	ignoreErrors:
+		-
+			message: '#^Access to an undefined property Livewire\\Component\:\:\$data\.$#'
+			identifier: property.notFound
+			count: 2
+			path: src/Actions/CopyTranslationAction.php
+
+		-
+			message: '#^Call to an undefined static method Livewire\\Component\:\:getResource\(\)\.$#'
+			identifier: staticMethod.notFound
+			count: 1
+			path: src/Actions/CopyTranslationAction.php
+
+		-
+			message: '#^Call to an undefined method Illuminate\\Database\\Eloquent\\Model\:\:getTranslatableAttributes\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: src/Forms/TranslatableTabs.php
