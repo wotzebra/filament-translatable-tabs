@@ -44,6 +44,78 @@ it('dehydrates the locale tabs back to field-first translations', function () {
         ->and($state)->not->toHaveKey('nl');
 });
 
+it('prefers the filled data over the record translations when hydrating', function () {
+    $component = Livewire::test(TestEditForm::class, [
+        'translations' => ['title' => ['en' => 'Hello', 'nl' => 'Hallo']],
+        // What a `mutateFormDataBeforeFill()` hook would produce.
+        'fillTranslations' => ['title' => ['en' => 'Mutated hello']],
+    ]);
+
+    $component
+        ->assertSet('data.en.title', 'Mutated hello')
+        ->assertSet('data.nl.title', null);
+});
+
+it('runs mutateDehydratedStateUsing callbacks before transposing', function () {
+    $component = Livewire::test(TestEditForm::class, [
+        'translations' => ['title' => ['en' => 'Hello', 'nl' => 'Hallo']],
+    ]);
+
+    $component->set('data.en.subtitle', 'shout');
+
+    $state = $component->instance()->form->getState();
+
+    // The field's own dehydration mutation ran on the locale tab's value, and
+    // `subtitle` transposes field-first even though it is not in the record's
+    // translatable attributes, so no locale key leaks into the state.
+    expect($state['subtitle']['en'])->toBe('SHOUT')
+        ->and($state)->not->toHaveKey('en')
+        ->and($state)->not->toHaveKey('nl');
+});
+
+it('transposes a partially refreshed attribute into the locale tabs', function () {
+    $component = Livewire::test(TestEditForm::class, [
+        'translations' => ['title' => ['en' => 'Hello', 'nl' => 'Hallo']],
+    ]);
+
+    $component->set('translations.title.en', 'Updated');
+
+    $component->call('refreshFormData', ['title']);
+
+    $component
+        ->assertSet('data.en.title', 'Updated')
+        ->assertSet('data.nl.title', 'Hallo');
+
+    expect($component->get('data'))->not->toHaveKey('title');
+});
+
+it('transposes a partially refreshed locale path into the locale tabs', function () {
+    $component = Livewire::test(TestEditForm::class, [
+        'translations' => ['title' => ['en' => 'Hello', 'nl' => 'Hallo']],
+    ]);
+
+    $component->set('translations.title.en', 'Updated');
+
+    $component->call('refreshFormData', ['title.en']);
+
+    $component
+        ->assertSet('data.en.title', 'Updated')
+        ->assertSet('data.nl.title', 'Hallo');
+
+    expect($component->get('data'))->not->toHaveKey('title');
+});
+
+it('resolves the record through the livewire when the schema has no model', function () {
+    $component = Livewire::test(TestEditForm::class, [
+        'translations' => ['title' => ['en' => 'Hello', 'nl' => 'Hallo']],
+        'hasSchemaModel' => false,
+    ]);
+
+    $component
+        ->assertSet('data.en.title', 'Hello')
+        ->assertSet('data.nl.title', 'Hallo');
+});
+
 it('survives a fill and dehydrate round-trip unchanged', function () {
     $translations = [
         'title' => ['en' => 'Hello', 'nl' => 'Hallo'],

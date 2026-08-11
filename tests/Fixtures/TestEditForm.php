@@ -20,11 +20,23 @@ class TestEditForm extends Component implements HasSchemas
 
     public array $recordAttributes = [];
 
+    /** Overrides the record's translations in `fill()`, like `mutateFormDataBeforeFill()` would. */
+    public array $fillTranslations = [];
+
+    /** When false, the record is only resolvable through `$livewire->getRecord()`. */
+    public bool $hasSchemaModel = true;
+
     public function mount(): void
     {
         // Mimics an edit page: `$record->attributesToArray()` returns translatable
         // attributes field-first (`title => [en => ..., nl => ...]`).
-        $this->form->fill([...$this->recordAttributes, ...$this->translations]);
+        $this->form->fill([...$this->recordAttributes, ...$this->translations, ...$this->fillTranslations]);
+    }
+
+    public function refreshFormData(array $statePaths): void
+    {
+        // Mimics `EditRecord::refreshFormData()`.
+        $this->form->fillPartially([...$this->recordAttributes, ...$this->translations], $statePaths);
     }
 
     public function getRecord(): TestRecord
@@ -46,10 +58,14 @@ class TestEditForm extends Component implements HasSchemas
                     ])
                     ->translatableFields(fn (string $locale) => [
                         TextInput::make('title'),
+                        // Deliberately absent from the record's translatable attributes.
+                        TextInput::make('subtitle')
+                            ->mutateDehydratedStateUsing(fn (?string $state): ?string => is_string($state) ? strtoupper($state) : $state),
                         Checkbox::make('online'),
                     ]),
             ])
-            ->statePath('data');
+            ->statePath('data')
+            ->model($this->hasSchemaModel ? $this->getRecord() : null);
     }
 
     public function render(): string
