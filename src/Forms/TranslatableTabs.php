@@ -358,9 +358,20 @@ class TranslatableTabs extends Tabs
 
     public function getDefaultChildComponents(): array
     {
-        $tabs = [
+        $defaultFields = $this->evaluate($this->defaultFields);
+
+        /*
+         * Only when there is something in it. The Default tab holds what is the same in
+         * every language, and a record can genuinely have nothing of the kind — a menu
+         * item that builds its own navigation from the catalogue has a label per language
+         * and no shared destination at all.
+         *
+         * Drawn regardless, it is the tab a form opens on: an editor lands on an empty
+         * panel, and the fields they came to fill in are behind a tab they have to find.
+         */
+        $tabs = $defaultFields === [] ? [] : [
             Tab::make('Default')
-                ->schema($this->evaluate($this->defaultFields))
+                ->schema($defaultFields)
                 ->id('default')
                 ->key('default'),
         ];
