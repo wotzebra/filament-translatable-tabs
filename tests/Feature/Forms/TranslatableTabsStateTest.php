@@ -2,6 +2,7 @@
 
 use Livewire\Livewire;
 use Wotz\TranslatableTabs\Tests\Fixtures\TestEditForm;
+use Wotz\TranslatableTabs\Tests\Fixtures\TestModellessForm;
 
 it('hydrates translations locale-first through the fields own state casts', function () {
     $component = Livewire::test(TestEditForm::class, [
@@ -127,4 +128,59 @@ it('survives a fill and dehydrate round-trip unchanged', function () {
         ->getState();
 
     expect($state['title'])->toBe($translations['title']);
+});
+
+it('hydrates field-first translations into the locale tabs without a translatable model', function () {
+    $component = Livewire::test(TestModellessForm::class, [
+        'fillData' => [
+            'working_title' => 'Working title',
+            'title' => ['en' => 'Hello', 'nl' => 'Hallo'],
+            'subtitle' => ['en' => 'Nested in a grid'],
+            'online' => ['en' => 1],
+        ],
+    ]);
+
+    $component
+        ->assertSet('data.working_title', 'Working title')
+        ->assertSet('data.en.title', 'Hello')
+        ->assertSet('data.nl.title', 'Hallo')
+        ->assertSet('data.en.subtitle', 'Nested in a grid')
+        ->assertSet('data.en.online', true, strict: true);
+
+    expect($component->get('data'))
+        ->not->toHaveKey('title')
+        ->not->toHaveKey('subtitle')
+        ->not->toHaveKey('online');
+});
+
+it('keeps its translations over repeated saves without a translatable model', function () {
+    $saved = [
+        'working_title' => 'Working title',
+        'title' => ['en' => 'Hello', 'nl' => 'Hallo'],
+        'subtitle' => ['en' => 'Sub', 'nl' => null],
+        'online' => ['en' => true, 'nl' => false],
+    ];
+
+    // Save, reopen the saved data, and save again, as a JSON column would.
+    foreach (range(1, 2) as $_) {
+        $saved = Livewire::test(TestModellessForm::class, ['fillData' => $saved])
+            ->instance()
+            ->form
+            ->getState();
+    }
+
+    expect($saved)->toBe([
+        'working_title' => 'Working title',
+        'title' => ['en' => 'Hello', 'nl' => 'Hallo'],
+        'subtitle' => ['en' => 'Sub', 'nl' => null],
+        'online' => ['en' => true, 'nl' => false],
+    ]);
+});
+
+it('still hydrates locale-first data without a translatable model', function () {
+    Livewire::test(TestModellessForm::class, [
+        'fillData' => ['en' => ['title' => 'Hello', 'online' => true]],
+    ])
+        ->assertSet('data.en.title', 'Hello')
+        ->assertSet('data.en.online', true);
 });

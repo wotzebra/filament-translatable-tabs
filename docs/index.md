@@ -60,6 +60,8 @@ The default fields are the non-translatable fields and the translatable fields w
 
 That's it — the tabs hydrate the record's translations into a tab per locale and dehydrate them back to the shape `spatie/laravel-translatable` expects when saving. No page trait is needed.
 
+The tabs don't need a model either. When the form has no translatable model (for example translations stored in a JSON column or an action's data), the fields inside `translatableFields()` are treated as the translatable attributes: data filled as `title => [en => ...]` loads into the locale tabs, and saving returns the same shape.
+
 > **Note**
 > Versions before v3 required adding the `HasTranslations` trait to your Create and Edit pages. That trait has been removed; delete it from your pages when upgrading.
 

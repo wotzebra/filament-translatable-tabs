@@ -10,6 +10,7 @@ use Filament\Schemas\Schema;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 use Livewire\Component as Livewire;
 
 class TranslatableTabs extends Tabs
@@ -302,11 +303,53 @@ class TranslatableTabs extends Tabs
     }
 
     /**
+     * The model's translatable attributes, or — when there is no translatable
+     * model, e.g. translations stored in a JSON column or an action's data —
+     * the fields inside the locale tabs, which are exactly what
+     * `transposeDehydratedTranslations()` writes field-first.
+     *
      * @return array<string>
      */
     protected function getTranslatableAttributeNames(): array
     {
-        return $this->getTranslatableModel()?->getTranslatableAttributes() ?? [];
+        if ($model = $this->getTranslatableModel()) {
+            return $model->getTranslatableAttributes();
+        }
+
+        return $this->getTranslatableFieldNames();
+    }
+
+    /**
+     * The top-level state keys of the fields inside the locale tabs, so a
+     * field nested in a layout component resolves to its own name and a field
+     * inside a component with its own state path resolves to that path.
+     *
+     * @return array<string>
+     */
+    protected function getTranslatableFieldNames(): array
+    {
+        $locales = $this->getLocales();
+        $names = [];
+
+        foreach ($this->getChildSchema()?->getComponents(withActions: false, withHidden: true) ?? [] as $tab) {
+            if (! in_array($tab->getStatePath(isAbsolute: false), $locales, true)) {
+                continue;
+            }
+
+            $tabStatePath = "{$tab->getStatePath()}.";
+
+            foreach ($tab->getChildSchema()?->getFlatFields(withHidden: true) ?? [] as $field) {
+                $fieldStatePath = $field->getStatePath();
+
+                if (! str_starts_with($fieldStatePath, $tabStatePath)) {
+                    continue;
+                }
+
+                $names[] = Str::before(substr($fieldStatePath, strlen($tabStatePath)), '.');
+            }
+        }
+
+        return array_values(array_unique($names));
     }
 
     public function defaultFields(array|Closure $defaultFields): static
